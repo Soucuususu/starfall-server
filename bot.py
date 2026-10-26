@@ -3,23 +3,44 @@ import json
 import os
 import urllib.parse
 import urllib.request
+from urllib.error import HTTPError, URLError
 from datetime import datetime, timezone
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL = os.environ["DISCORD_CHANNEL_ID"]
-SERVER = os.getenv("MC_SERVER_ADDRESS", "Starfall-t6RL.aternos.me")
+SERVER = os.getenv(
+    "MC_SERVER_ADDRESS",
+    "Starfall-t6RL.aternos.me"
+)
 INVITE = "https://discord.gg/fXNwNr47"
 API = "https://discord.com/api/v10"
 
 
 def get_json(url, headers=None, method="GET", body=None):
-    data = None if body is None else json.dumps(body).encode()
+    data = None if body is None else json.dumps(body).encode("utf-8")
+
     req = urllib.request.Request(
-        url, data=data, method=method, headers=headers or {}
+        url,
+        data=data,
+        method=method,
+        headers=headers or {},
     )
-    with urllib.request.urlopen(req, timeout=25) as response:
-        raw = response.read().decode()
-        return json.loads(raw) if raw else {}
+
+    try:
+        with urllib.request.urlopen(req, timeout=25) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else {}
+
+    except HTTPError as e:
+        details = e.read().decode("utf-8", errors="replace")
+        print(f"ERRO HTTP: {e.code}")
+        print(f"URL: {url}")
+        print(f"RESPOSTA: {details}")
+        raise
+
+    except URLError as e:
+        print(f"ERRO DE CONEXÃO: {e}")
+        raise
 
 
 def discord(method, path, body=None):
@@ -40,10 +61,17 @@ def main():
         "https://api.mcsrvstat.us/bedrock/3/"
         + urllib.parse.quote(SERVER, safe=".:")
     )
-    data = get_json(status_url, {"User-Agent": "StarfallStatusBot/1.0"})
+
+    print("Verificando servidor:", SERVER)
+    data = get_json(
+        status_url,
+        {"User-Agent": "StarfallStatusBot/1.0"},
+    )
 
     if "online" not in data:
-        raise RuntimeError("Não foi possível verificar o servidor.")
+        raise RuntimeError(
+            "A API não retornou o estado do servidor."
+        )
 
     online = bool(data["online"])
 
@@ -51,12 +79,16 @@ def main():
         with open("state.json", encoding="utf-8") as f:
             state = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        state = {"last_online": None, "message_id": None}
+        state = {
+            "last_online": None,
+            "message_id": None,
+        }
 
     if online:
         players = data.get("players") or {}
         count = players.get("online", "?")
         maximum = players.get("max", "?")
+
         status = "🟢 ONLINE"
         description = "O Starfall está aberto! Venha jogar."
         color = 0x22C55E
@@ -72,19 +104,38 @@ def main():
         "description": description,
         "color": color,
         "fields": [
-            {"name": "Estado", "value": status, "inline": True},
-            {"name": "Jogadores", "value": player_text, "inline": True},
-            {"name": "Edição", "value": "Minecraft Bedrock", "inline": True},
-            {"name": "Endereço", "value": f"`{SERVER}`", "inline": False},
+            {
+                "name": "Estado",
+                "value": status,
+                "inline": True,
+            },
+            {
+                "name": "Jogadores",
+                "value": player_text,
+                "inline": True,
+            },
+            {
+                "name": "Edição",
+                "value": "Minecraft Bedrock",
+                "inline": True,
+            },
+            {
+                "name": "Endereço",
+                "value": f"`{SERVER}`",
+                "inline": False,
+            },
         ],
         "footer": {
             "text": "Atualizado em "
-            + datetime.now(timezone.utc).strftime("%d/%m %H:%M UTC")
+            + datetime.now(timezone.utc).strftime(
+                "%d/%m %H:%M UTC"
+            )
         },
         "url": INVITE,
     }
 
     message_id = state.get("message_id")
+
     if message_id:
         try:
             discord(
@@ -92,7 +143,13 @@ def main():
                 f"/channels/{CHANNEL}/messages/{message_id}",
                 {"embeds": [embed]},
             )
-        except Exception:
+            print("Mensagem de status atualizada.")
+
+        except Exception as e:
+            print(
+                "Não foi possível atualizar a mensagem existente:",
+                str(e),
+            )
             message_id = None
 
     if not message_id:
@@ -101,20 +158,26 @@ def main():
             f"/channels/{CHANNEL}/messages",
             {"embeds": [embed]},
         )
-        message_id = message["id"]
 
-    if online and state["last_online"] is False:
+        message_id = message["id"]
+        print("Mensagem de status criada:", message_id)
+
+    if online and state.get("last_online") is False:
         discord(
             "POST",
             f"/channels/{CHANNEL}/messages",
             {
                 "content": (
                     "🎉 @here **O STARFALL ESTÁ ONLINE!**\n"
-                    f"IP: `{SERVER}`\n{INVITE}"
+                    f"IP: `{SERVER}`\n"
+                    f"{INVITE}"
                 ),
-                "allowed_mentions": {"parse": ["here"]},
+                "allowed_mentions": {
+                    "parse": ["here"]
+                },
             },
         )
+        print("Anúncio de servidor online enviado.")
 
     state["last_online"] = online
     state["message_id"] = message_id
@@ -127,4 +190,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-  
+        
